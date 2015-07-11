@@ -4,6 +4,11 @@ var path = require('path');
 var log = require('./log');
 var fs = require('fs');
 var libFile = require('../lib/nodejs/file');
+var libObject = require('../lib/js/object');
+
+module.exports.readAndCheckConfig = readAndCheckConfig;
+module.exports.checkKit = checkKit;
+module.exports.checkFormat = checkFormat;
 
 function getDeps(arch, archRoot, cache) {
     if(cache.formats[arch]) {
@@ -20,9 +25,19 @@ function getDeps(arch, archRoot, cache) {
             return false;
         }
     }
+    libObject.extend(cache.format, cache.formats[arch]);
+    if(!cache.config.project.deps) {
+        return true;
+    }
+    var deps = cache.config.project.deps;
+    for(var dep in deps) {
+        if(!getDeps(dep, archRoot, cache)) {
+            log.error('getDeps ' + arch + ' error');
+            return false;
+        }
+    }
+    return true;
 }
-
-module.exports.readAndCheckConfig = readAndCheckConfig;
 
 function readAndCheckConfig(dir, rootDir) {
     var archRoot = path.resolve(rootDir + '/arch');
@@ -74,7 +89,6 @@ function readConfig(dir, labels, cache) {
     return true;
 }
 
-module.exports.checkKit = checkKit;
 function checkKit(json, fjson, env) {
     if(!json) {
         json = {};
@@ -127,7 +141,6 @@ function checkKit(json, fjson, env) {
     return true;
 }
 
-module.exports.checkFormat = checkFormat;
 function checkFormat(json, fjson, env) {
     if(!json) {
         log.error('checkFormat wrong params');
@@ -138,5 +151,130 @@ function checkFormat(json, fjson, env) {
         if(typeof(entryFormat) == 'string') {
             entryFormat = {type: entryFormat};
         }
+        if(!json.hasOwnProperty(key)) {
+            if(entryFormat.default) {
+                json[key] = entryFormat.default;
+            }else if(entryFormat.eq) {
+                json[key] = json[entryFormat.eq];
+            }else if(entryFormat.required) {
+                log.error(key + ' required but not existed');
+                return false;
+            }else if(entryFormat.type == 'enums') {
+                // default all enums
+                // processed in the switch
+                // done
+            }else if(entryFormat.kit == 'array' || entryFormat.type == 'array') {
+                // default
+                json[key] = [];
+            }else if(entryFormat.kit) {
+                json[key] = {};
+            }else {
+                continue;
+            }
+        }
+        if(entryFormat.kit) {
+            if(json.hasOwnProperty(key)) {
+                if(!checkKit(json[key], entryFormat, env)) {
+                    log.error(key + ' is not the format of kit ' + entryFormat.kit);
+                    return false;
+                }else {
+                    continue;
+                }
+            }else {
+                json[key] = [];
+            }
+        }
+        if(!entryFormat.type) {
+            log.error(entryFormat);
+            log.error(json[key]);
+            log.error('Format json error');
+            return false;
+        }
+        switch(entryFormat.type) {
+            case 'enums':
+                if(typeof(json[key]) == 'string') {
+                    json[key] = [json[key]];
+                }
+                if(entryFormat.sets) {
+                    if(json[key]) {
+                        for(var i = 0; i < json[key].length; i++) {
+                            if(libArray.indexOf(entryFormat.sets, json[key][i]) == -1) {
+                                log.error(key + ':' + json[key][i] + ' is not in ' + entryFormat.sets.join(', '));
+                                return false;
+                            }
+                        }
+                    }else {
+                        json[key] = entryFormat.sets;
+                    }
+                }else if(entryFormat.from) {
+                    if(!env) {
+                        log.error('project.json not support enums type');
+                        return false;
+                    }
+                    var list = libObject.getByKey(env, entryFormat.from);
+                    if(!list) {
+                        log.error('no ' + entryFormat.from + ' in ');
+                        log.error(env);
+                        json[key] = [];
+                        return true;
+                    }
+                    if(json[key]) {
+                        for(var i = 0; i < json[key].length; i++) {
+                            if(!list[json[key][i]]) {
+                                log.error(key + ':' + json[key][i] + ' is not in ' + Object.keys(list).join(', '));
+                                return false;
+                            }
+                        }
+                    }else {
+                        json[key] = Object.keys(list);
+                    }json[key].from = entryFormat.from;
+                }
+                break;
+            case 'enum':
+                if(entryFormat.sets) {
+                    if(libArray.indexOf(entryFormat.sets, json[key]) == -1) {
+                        log.error(key + ':' + json[key] + 'is not in ' + entryFormat.sets.join(', '));
+                        return false;
+                    }
+                }else if(entryFormat.from) {
+                    if(!env) {
+                        log.error('project.json not support enum type');
+                        return false;
+                    }
+                    var list = libObject.getByKey(env, entryFormat.from);
+                    if(!list) {
+                        log.error('no ' + entryFormat.from + ' in ');
+                        log.error(env);
+                        return false;
+                    }
+                    if(!list[json[key]]) {
+                        log.error(key + ':' + json[key] + ' is not in ' + Object.keys(list).join(', '));
+                        return false;
+                    }
+                }
+                break;
+            case 'array':
+                if(!libObject.isArray(json[key])) {
+                    log.error(JSON.stringify(json, undefined, 2) + key + ' is not array');
+                    return false;
+                }
+                break;
+            case 'list':
+                break;
+            case 'number':
+                if(typeof(json[key]) != 'number') {
+                    log.error(JSON.stringify(json, undefined, 2) + key + 'is not number');
+                    return false;
+                }
+                break;
+            case 'string':
+            default:
+                if(typeof(json[key]) != 'string') {
+                    log.error(JSON.stringify(json, undefined, 2) + key + 'is not string');
+                    return false;
+                }
+
+        }
     }
+    return true;
 }
