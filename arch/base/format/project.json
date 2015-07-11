@@ -1,0 +1,12 @@
+{
+    "kit": "mono",
+    "format": {
+        "deps": {
+            "type": "list"
+        },
+        "arch": {
+            "type": "string",
+            "default": "base"
+        }
+    }
+}
